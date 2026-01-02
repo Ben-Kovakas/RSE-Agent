@@ -1,4 +1,4 @@
-from typing import List, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 
 class ResearchState(TypedDict):
@@ -18,11 +18,17 @@ class ResearchState(TypedDict):
     code: str
     test_code: str
 
+    # Carver checklist / compliance
+    compliance_score: Dict[str, Any]
+
     # Execution results
     stdout: str
     stderr: str
     error: str
     passed: bool
+
+    # Runner metadata
+    runner: str  # e.g. "e2b" or "local"
 
     # Control + audit
     iteration: int
