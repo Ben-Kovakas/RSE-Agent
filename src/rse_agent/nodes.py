@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import ast
 import base64
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -13,95 +11,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .state import ResearchState
-
-
-_ABSOLUTE_PATH_LITERAL_RE = re.compile(
-    r"(?P<q>['\"])(?P<path>(/[^'\"]+|[A-Za-z]:\\\\[^'\"]+))(?P=q)"
+from .checks import (
+    check_license,
+    check_no_hardcoded_paths,
+    check_separation_of_concerns,
+    check_version_control_hygiene,
+    safe_bool,
 )
-
-
-def _safe_bool(value: object) -> bool:
-    return bool(value) is True
-
-
-def _check_no_hardcoded_paths(code: str) -> tuple[bool, str]:
-    matches = list(_ABSOLUTE_PATH_LITERAL_RE.finditer(code))
-    if not matches:
-        return True, "no absolute path string literals detected"
-
-    sample = [m.group("path")[:120] for m in matches[:3]]
-    return False, f"found absolute path literals (sample): {sample}"
-
-
-def _check_version_control_hygiene(code: str) -> tuple[bool, str]:
-    header = "\n".join(code.splitlines()[:40]).lower()
-    signals = [
-        "__version__",
-        "version",
-        "commit",
-        "git",
-        "sha",
-        "revision",
-    ]
-    ok = any(s in header for s in signals)
-    return ok, "header mentions version/commit" if ok else "no obvious version/commit metadata in header"
-
-
-def _check_license(repo_root: Path) -> tuple[bool, str]:
-    license_files = []
-    for pattern in ("LICENSE", "LICENSE.*", "COPYING", "COPYING.*"):
-        license_files.extend(repo_root.glob(pattern))
-    if license_files:
-        return True, f"license file present: {license_files[0].name}"
-    return False, "no LICENSE/COPYING file found at repo root"
-
-
-class _IOSeparationVisitor(ast.NodeVisitor):
-    def __init__(self) -> None:
-        self.top_level_io_calls: list[str] = []
-        self._function_depth = 0
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._function_depth += 1
-        self.generic_visit(node)
-        self._function_depth -= 1
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._function_depth += 1
-        self.generic_visit(node)
-        self._function_depth -= 1
-
-    def visit_Call(self, node: ast.Call) -> None:
-        # Enforce separation of concerns in the simplest, most reproducible way:
-        # no top-level I/O calls (outside functions) that read data.
-        if self._function_depth == 0:
-            name = None
-            if isinstance(node.func, ast.Name):
-                name = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                name = node.func.attr
-
-            if name in {"open", "read_csv", "read_table", "read_excel", "load"}:
-                self.top_level_io_calls.append(name)
-
-        self.generic_visit(node)
-
-
-def _check_separation_of_concerns(code: str) -> tuple[bool, str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return False, f"cannot parse code to analyze I/O separation: {exc}"
-
-    visitor = _IOSeparationVisitor()
-    visitor.visit(tree)
-
-    if visitor.top_level_io_calls:
-        calls = ", ".join(sorted(set(visitor.top_level_io_calls)))
-        return False, f"top-level I/O call(s) detected: {calls}; move into functions or main-guard"
-
-    return True, "no top-level I/O calls detected"
+from .state import ResearchState
 
 
 def _call_openai_refactor(
@@ -395,19 +312,19 @@ def reviewer_node(state: ResearchState) -> dict:
 
     checks: dict[str, dict[str, object]] = {}
 
-    ok, detail = _check_no_hardcoded_paths(code)
+    ok, detail = check_no_hardcoded_paths(code)
     checks["no_hardcoded_paths"] = {"pass": ok, "detail": detail}
 
-    ok, detail = _check_version_control_hygiene(code)
+    ok, detail = check_version_control_hygiene(code)
     checks["version_control_hygiene"] = {"pass": ok, "detail": detail}
 
-    ok, detail = _check_separation_of_concerns(code)
+    ok, detail = check_separation_of_concerns(code)
     checks["separation_of_concerns"] = {"pass": ok, "detail": detail}
 
-    ok, detail = _check_license(repo_root)
+    ok, detail = check_license(repo_root)
     checks["license_check"] = {"pass": ok, "detail": detail}
 
-    passed_count = sum(1 for v in checks.values() if _safe_bool(v.get("pass")))
+    passed_count = sum(1 for v in checks.values() if safe_bool(v.get("pass")))
     score = passed_count / max(len(checks), 1)
 
     # Strict-but-practical: block execution only on issues the agent can reasonably
@@ -415,7 +332,7 @@ def reviewer_node(state: ResearchState) -> dict:
     blocking_failures = [
         key
         for key, v in checks.items()
-        if not _safe_bool(v.get("pass")) and key in {"no_hardcoded_paths", "separation_of_concerns"}
+        if not safe_bool(v.get("pass")) and key in {"no_hardcoded_paths", "separation_of_concerns"}
     ]
     blocking = len(blocking_failures) > 0
 

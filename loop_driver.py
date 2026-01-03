@@ -127,7 +127,7 @@ def run(*, task: str, input_path: Path, max_iterations: int, out_dir: Path) -> R
         "iteration": 0,
         "max_iterations": max_iterations,
         "previous_attempts": [],
-        "use_stubs": False,
+        "use_stubs": True,
     }
 
     print(f"[rse-agent] task: {task}")

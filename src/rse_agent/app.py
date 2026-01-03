@@ -47,7 +47,7 @@ if st.button("Generate & Validate"):
             "iteration": 0,
             "max_iterations": 3,
             "previous_attempts": [],
-            "use_stubs": False,
+            "use_stubs": True,
         }
         
         # Run the Graph
