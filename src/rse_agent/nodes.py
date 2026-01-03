@@ -193,16 +193,8 @@ Hard requirements:
     )
     text = response.output_text or ""
 
-    # Defensive cleanup: if the model wraps in fences, strip them.
-    if "```" in text:
-        parts = text.split("```")
-        if len(parts) >= 3:
-            text = parts[1]
-            if text.lstrip().startswith("python"):
-                text = text.lstrip()[6:]
-            text = text.strip()
-
-    return text.strip() or source_code
+    cleaned = _strip_markdown_fences(text)
+    return cleaned or source_code
 
 
 def _strip_markdown_fences(text: str) -> str:
