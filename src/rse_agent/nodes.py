@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from .checks import (
     check_license,
@@ -18,171 +17,10 @@ from .checks import (
     check_version_control_hygiene,
     safe_bool,
 )
+from .llm import call_openai_generate_tests, call_openai_refactor
 from .state import ResearchState
 
 
-def _call_openai_refactor(
-    *,
-    task: str,
-    source_filename: str,
-    source_code: str,
-    previous_candidate: str,
-    last_error: str,
-    last_stdout: str,
-    last_stderr: str,
-    compliance_score: dict,
-) -> str:
-    load_dotenv()
-
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to your .env or export it in your shell."
-        )
-
-    client = OpenAI()
-
-    # Placeholder instructions: keep this short/strict so you can iterate later.
-    prompt = f"""You are a senior Research Software Engineer.
-
-Goal:
-{task}
-
-Input Python file name:
-{source_filename or '(unknown)'}
-
-You are a Research Software Engineer (RSE) acting as an automated peer reviewer. 
-Your goal is not just "clean code," but "sustainable scientific software" based on Dr. Jeffrey Carver's guidelines.
-
-CRITICAL INSTRUCTIONS:
-1. READABILITY OVER CLEVERNESS: 
-   - Research code is read more than it is written. Refactor complex list comprehensions into explicit loops if it aids clarity.
-   - Rename single-letter variables (e.g., 'T', 'p') to descriptive physical quantities (e.g., 'temperature_kelvin', 'pressure_pascal') unless they are standard mathematical notation in the domain.
-
-2. DOCUMENTATION (The "Why"):
-   - Do not just document *what* the code does. Document *why* it does it. 
-   - If a constant is used (e.g., 9.81), extract it to a named constant and cite the source or physical reason.
-
-3. MODULARITY:
-   - Break long simulation loops into testable "kernels" or "update_steps".
-   - Isolate Input/Output code from Computation code (crucial for testing reproducibility).
-
-4. DEFENSIVE CODING:
-   - Add assertions for physical constraints (e.g., `assert mass > 0`).
-   - Explicitly handle floating-point comparison (use `math.isclose` or `numpy.allclose` instead of `==`).
-
-Python code to refactor:
-```python
-{source_code}
-```
-
-If provided, you MUST treat the following as the current candidate implementation and apply targeted edits
-to address failures (tests, checklist blocking issues, runtime errors). Avoid redoing everything from scratch.
-
-Current candidate implementation (if empty, ignore):
-```python
-{previous_candidate}
-```
-
-Failure signals from last iteration (fix these):
-- error: {last_error}
-- stdout (pytest/runner output):
-```text
-{last_stdout}
-```
-- stderr:
-```text
-{last_stderr}
-```
-- compliance_score (Carver checklist):
-```json
-{json.dumps(compliance_score, ensure_ascii=False)}
-```
-
-Hard requirements:
-- Output ONLY valid Python source code (no markdown).
-- Use plain ASCII quotes in code (', ") and avoid “smart quotes”.
-- Keep computation separate from I/O; move file reading/writing under functions or a main-guard.
-"""
-
-    response = client.responses.create(
-        model="gpt-5-nano",
-        input=prompt,
-    )
-    text = response.output_text or ""
-
-    cleaned = _strip_markdown_fences(text)
-    return cleaned or source_code
-
-
-def _strip_markdown_fences(text: str) -> str:
-    if "```" not in text:
-        return text.strip()
-    parts = text.split("```")
-    if len(parts) >= 3:
-        body = parts[1]
-        if body.lstrip().startswith("python"):
-            body = body.lstrip()[6:]
-        return body.strip()
-    return text.strip()
-
-
-def _call_openai_generate_tests(*, task: str, source_filename: str, code: str) -> str:
-    load_dotenv()
-
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to your .env or export it in your shell."
-        )
-
-    client = OpenAI()
-
-    prompt = f"""You are a senior Research Software Engineer.
-
-Goal:
-{task}
-
-You are writing SCIENTIFIC VALIDATION tests for research code.
-
-CRITICAL REQUIREMENTS:
-- Output ONLY a single Python pytest module. No markdown, no explanations.
-- Import the code-under-test from a module named `candidate`.
-- Avoid asserting exact numeric results unless they are guaranteed invariants.
-- Prefer tests that validate *relationships* and *invariants*.
-
-You MUST include these three categories when applicable:
-
-A) Metamorphic Relations
-- Since we don't know if a single output is "correct", test input-output relationships.
-- Example pattern: scaling, monotonicity, symmetry, invariance under equivalent transformations.
-
-B) Pseudo-Oracles / Conservation Laws
-- Identify physical invariants (mass/energy/momentum/probability normalization, etc.)
-- Use floating point tolerant comparisons (math.isclose / numpy.allclose).
-
-C) Smoke Tests for Non-Determinism
-- If the code appears stochastic, write a statistical smoke test:
-  run >= 100 trials and assert the mean is within ~3 standard deviations.
-- If it appears deterministic, write a robustness smoke test instead (e.g., repeated runs equal).
-
-Additional guardrails:
-- Tests must be self-contained and not require network access.
-- Do not read external files; generate minimal synthetic inputs.
-- If the module exposes no clear public function(s), at least test that it imports and that key functions/classes exist.
-
-Candidate file name (context only): {source_filename or '(unknown)'}
-
-Python code under test (module `candidate.py`):
-```python
-{code}
-```
-"""
-
-    response = client.responses.create(
-        model="gpt-5-nano",
-        input=prompt,
-    )
-    text = response.output_text or ""
-    return _strip_markdown_fences(text) or "# failed to generate tests\n"
 
 
 def coder_node(state: ResearchState) -> dict:
@@ -191,16 +29,6 @@ def coder_node(state: ResearchState) -> dict:
     Stub behavior (default): generate deterministic placeholder code.
     """
     if state.get("use_stubs", True):
-        original_hint = ""
-        if state.get("source_code", "").strip():
-            original_hint = (
-                "\n\n# --- user file (stub pass-through) ---\n"
-                f"# filename: {state.get('source_filename', '(unknown)')}\n"
-                "# (Not executing or importing user code yet.)\n"
-                + "\n".join(f"# {line}" for line in state["source_code"].splitlines()[:30])
-                + ("\n# ..." if len(state["source_code"].splitlines()) > 30 else "")
-            )
-
         code = (
             "def analyze(data=None):\n"
             "    \"\"\"Stub analysis function for wiring validation.\"\"\"\n"
@@ -208,7 +36,7 @@ def coder_node(state: ResearchState) -> dict:
             "\n"
             "if __name__ == '__main__':\n"
             "    print(analyze())\n"
-        ) + original_hint
+        )
         return {
             "code": code,
             "iteration": state["iteration"] + 1,
@@ -226,7 +54,7 @@ def coder_node(state: ResearchState) -> dict:
         }
 
     try:
-        cleaned = _call_openai_refactor(
+        cleaned = call_openai_refactor(
             task=state["task"],
             source_filename=state.get("source_filename", ""),
             source_code=state["source_code"],
@@ -268,7 +96,7 @@ def tester_node(state: ResearchState) -> dict:
         return {"test_code": "# no code available to test\n"}
 
     try:
-        test_code = _call_openai_generate_tests(
+        test_code = call_openai_generate_tests(
             task=state.get("task", ""),
             source_filename=state.get("source_filename", ""),
             code=code,

@@ -62,7 +62,23 @@ if st.button("Generate & Validate"):
             st.code(source_code, language="python")
 
         st.subheader("Refactored Output")
-        st.code(final_state.get("code", ""), language="python")
+        refactored_code = final_state.get("code", "")
+        st.code(refactored_code, language="python")
+        
+        # Download button for refactored code
+        if refactored_code.strip():
+            # Determine filename - use original filename with _refactored suffix, or default
+            if source_filename:
+                download_filename = source_filename.replace(".py", "_refactored.py")
+            else:
+                download_filename = "refactored_code.py"
+            
+            st.download_button(
+                label="Download Refactored Code",
+                data=refactored_code,
+                file_name=download_filename,
+                mime="text/x-python",
+            )
 
         error_msg = final_state.get("error", "")
         if error_msg:
