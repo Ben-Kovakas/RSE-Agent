@@ -9,7 +9,7 @@ We can see through their research that the research software may not be tested o
 
 General Logic flow of Technology
 
-![Flow Chart](media/Screenshot%202026-01-06%20at%201.53.00%20PM.png)
+![Flow Chart](media/rseFlowchart.png)
 
 There are four main nodes that are managed by LangGraph. What makes this project not just a simple LLM wrapper is because of this loop that is being created here
 
