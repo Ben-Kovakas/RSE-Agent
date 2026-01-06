@@ -25,3 +25,5 @@ There are four main nodes that are managed by LangGraph. What makes this project
 -Executor Node
     The final node takes the updated code and the test code provided by Coder and Tester respectively, and runs them inside E2B sandbox environment. Here it can safely execute code, run pytests, and then return the results back to our loop. The node then does a final check to see if the results are desirable. Good results? The code makes it out of the loop and returns the data to the user. Not good? Then the loop will reiterate and the code will be sent back to coder with all of the previous context of earlier iterations.
 
+![Demo1](media/rseDemo1.png)
+![Demo2](media/rseDemo2.png)
